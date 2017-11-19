@@ -197,54 +197,12 @@ RECT CConEmuSize::CalcMargins_Win10Frame()
 
 	if (IsWin10())
 	{
-		bool dwmSucceeded = false;
 		DWORD dwStyle = mp_ConEmu->FixWindowStyle(0);
-		// TODO: Does DWM return proper values for minimized windows?
-		if (ghWnd && (dwStyle & WS_THICKFRAME) && !isIconic())
+		if (dwStyle & WS_THICKFRAME)
 		{
-			RECT rcVisible = {}, rcReal = {};
-			if (SUCCEEDED(mp_ConEmu->DwmGetWindowAttribute(ghWnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rcVisible, sizeof(rcVisible)))
-				&& GetWindowRect(ghWnd, &rcReal))
-			{
-				// Debug purposes
-				wchar_t szInfo[140];
-
-				// rcVisible is expected to be smaller than rcReal
-				if (rcVisible.left > rcReal.left && rcVisible.right < rcReal.right
-					&& rcVisible.right > rcVisible.left && rcVisible.bottom > rcVisible.top
-					&& rcVisible.top >= rcReal.top && rcVisible.bottom <= rcReal.bottom)
-				{
-					dwmSucceeded = true;
-					rc = MakeRect(
-							(rcVisible.left - rcReal.left),
-							(rcVisible.top - rcReal.top),
-							(rcReal.right - rcVisible.right),
-							(rcReal.bottom - rcVisible.bottom)
-						);
-					_wsprintf(szInfo, SKIPCOUNT(szInfo) L"DWMWA_EXTENDED_FRAME_BOUNDS Visible={%i,%i}-{%i,%i} Real={%i,%i}-{%i,%i} Diff={%i,%i}-{%i,%i}",
-						LOGRECTCOORDS(rcVisible), LOGRECTCOORDS(rcReal), LOGRECTCOORDS(rc));
-					// bugs in DWMWA_EXTENDED_FRAME_BOUNDS?
-					//if (rc.right != rc.left)
-					//	rc.right = rc.left;
-					//if (rc.bottom > rc.right)
-					//	rc.bottom = rc.right;
-				}
-				else
-				{
-					_wsprintf(szInfo, SKIPCOUNT(szInfo) L"DWMWA_EXTENDED_FRAME_BOUNDS {FAIL} Visible={%i,%i}-{%i,%i} Real={%i,%i}-{%i,%i} Diff={%i,%i}-{%i,%i}",
-						LOGRECTCOORDS(rcVisible), LOGRECTCOORDS(rcReal),
-						(rcVisible.left - rcReal.left), (rcVisible.top - rcReal.top), (rcReal.right - rcVisible.right), (rcReal.bottom - rcVisible.bottom));
-				}
-
-				// Debug purposes
-				LogString(szInfo);
-			}
-		}
-
-		// Default values if API fails
-		if (!dwmSucceeded)
-		{
-			rc = MakeRect(7, 0, 7, 7);
+			const MonitorInfoCache& mi = CConEmuSize::NearestMonitorInfo();
+			if (mi.HasWin10Frame)
+				rc = mi.Win10Frame;
 		}
 	}
 
@@ -269,7 +227,7 @@ RECT CConEmuSize::CalcMargins_FrameCaption(DWORD/*enum ConEmuMargins*/ mg, ConEm
 		return rc;
 
 	bool processed = false;
-	if (!IsWin10())
+	const MonitorInfoCache& mi = NearestMonitorInfo();
 	{
 		DWORD dwStyle = mp_ConEmu->GetWindowStyle();
 		if (wmNewMode != wmCurrent)
@@ -278,7 +236,7 @@ RECT CConEmuSize::CalcMargins_FrameCaption(DWORD/*enum ConEmuMargins*/ mg, ConEm
 		const int nTestWidth = 100, nTestHeight = 100;
 		RECT rcTest = MakeRect(nTestWidth,nTestHeight);
 
-		if (AdjustWindowRectEx(&rcTest, dwStyle, FALSE, dwStyleEx))
+		if (mp_ConEmu->AdjustWindowRectExForDpi(&rcTest, dwStyle, FALSE, dwStyleEx, mi.Ydpi))
 		{
 			if ((mg & ((DWORD)CEM_FRAMECAPTION)) == CEM_CAPTION)
 			{
@@ -1522,6 +1480,8 @@ RECT CConEmuSize::GetGuiClientRect()
 
 void CConEmuSize::ReloadMonitorInfo()
 {
+	_ASSERTEX(isMainThread());
+
 	struct Invoke
 	{
 		static BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData)
@@ -1654,6 +1614,24 @@ void CConEmuSize::ReloadMonitorInfo()
 			monitors[i].Ydpi = dpi.Ydpi;
 		}
 	}
+}
+
+const CConEmuSize::MonitorInfoCache& CConEmuSize::NearestMonitorInfo(LPCRECT prcWnd /*= NULL*/)
+{
+	_ASSERTEX(isMainThread());
+	if (monitors.empty())
+	{
+		ReloadMonitorInfo();
+		_ASSERTEX(!monitors.empty());
+	}
+
+	HMONITOR hTargetMon = GetNearestMonitor();
+	for (int i = 0; i < monitors.size(); ++i)
+	{
+		if (monitors[i].hMon == hTargetMon)
+			return monitors[i];
+	}
+	return monitors[0];
 }
 
 RECT CConEmuSize::GetVirtualScreenRect(bool abFullScreen)
@@ -2235,16 +2213,22 @@ void CConEmuSize::StorePreMinimizeMonitor()
 
 HMONITOR CConEmuSize::GetNearestMonitor(MONITORINFO* pmi /*= NULL*/, LPCRECT prcWnd /*= NULL*/)
 {
+	static LONG call_count_lock = 0;
+	_ASSERTEX(call_count_lock == 0);
+	InterlockedIncrement(&call_count_lock);
+
 	HMONITOR hMon = NULL;
 	MONITORINFO mi = {sizeof(mi)};
 
 	HWND hWndFrom = mp_ConEmu->mp_Inside ? mp_ConEmu->mp_Inside->GetParentRoot() : ghWnd;
 
+	// #SIZE_TODO Utilize mh_MinFromMonitor during restore?
+
 	if (prcWnd)
 	{
 		hMon = GetNearestMonitorInfo(&mi, NULL, prcWnd);
 	}
-	else if (!ghWnd || (gpSet->isQuakeStyle && isIconic()))
+	else if (!hWndFrom || (gpSet->isQuakeStyle && isIconic()))
 	{
 		_ASSERTE(WndWidth.Value>0 && WndHeight.Value>0);
 		RECT rcEvalWnd = GetDefaultRect();
@@ -2256,6 +2240,7 @@ HMONITOR CConEmuSize::GetNearestMonitor(MONITORINFO* pmi /*= NULL*/, LPCRECT prc
 	}
 	else
 	{
+		_ASSERTEX(hWndFrom);
 		// !! We can't use CalcRect, it may call GetNearestMonitor in turn !!
 		//RECT rcDefault = CalcRect(CER_MAIN);
 		WINDOWPLACEMENT wpl = {sizeof(wpl)};
@@ -2263,6 +2248,8 @@ HMONITOR CConEmuSize::GetNearestMonitor(MONITORINFO* pmi /*= NULL*/, LPCRECT prc
 		RECT rcDefault = wpl.rcNormalPosition;
 		hMon = GetNearestMonitorInfo(&mi, mh_MinFromMonitor, &rcDefault);
 	}
+
+	InterlockedDecrement(&call_count_lock);
 
 	// GetNearestMonitorInfo failed?
 	_ASSERTE(hMon && mi.cbSize && !IsRectEmpty(&mi.rcMonitor) && !IsRectEmpty(&mi.rcWork));

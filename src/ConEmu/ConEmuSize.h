@@ -173,7 +173,7 @@ protected:
 	//void SetPostUpdateWindowSize(bool bValue);
 	//bool isPostUpdateWindowSize() { return mb_PostUpdateWindowSize; };
 
-protected:
+public:
 	struct MonitorInfoCache
 	{
 		HMONITOR hMon;
@@ -184,10 +184,13 @@ protected:
 		// Per-monitor DPI
 		int Xdpi, Ydpi;
 	};
+protected:
 	MArray<MonitorInfoCache> monitors;
+	void ReloadMonitorInfo();
+	// true during jump to monitor with different dpi
 	bool mb_MonitorDpiChanged;
 public:
-	void ReloadMonitorInfo();
+	const MonitorInfoCache& NearestMonitorInfo(LPCRECT prcWnd = NULL);
 
 public:
 	CConEmuSize(CConEmuMain* pOwner);
