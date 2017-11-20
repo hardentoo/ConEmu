@@ -28,6 +28,8 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
+#include "../common/MSectionSimple.h"
+
 class CConEmuMain;
 struct DpiValue;
 
@@ -152,8 +154,6 @@ protected:
 	LONG mn_IgnoreSizeChange;
 	LONG mn_InSetWindowPos;
 
-	HMONITOR mh_MinFromMonitor;
-
 	enum {
 		fsf_Hide = 0,     // Рамка и заголовок спрятаны
 		fsf_WaitShow = 1, // Запущен таймер показа рамки
@@ -185,12 +185,18 @@ public:
 		int Xdpi, Ydpi;
 	};
 protected:
+	MSectionSimple mcs_monitors = MSectionSimple(true);
 	MArray<MonitorInfoCache> monitors;
-	void ReloadMonitorInfo();
+	// Save preferred monitor to restore
+	HMONITOR mh_MinFromMonitor = NULL;
+	// Updated during move operation (jump, etc.)
+	HMONITOR mh_RequestedMonitor = NULL;
 	// true during jump to monitor with different dpi
-	bool mb_MonitorDpiChanged;
+	bool mb_MonitorDpiChanged = false;
 public:
-	const MonitorInfoCache& NearestMonitorInfo(LPCRECT prcWnd = NULL);
+	void ReloadMonitorInfo();
+	void SetRequestedMonitor(HMONITOR hNewMon);
+	MonitorInfoCache NearestMonitorInfo(HMONITOR hNewMon);
 
 public:
 	CConEmuSize(CConEmuMain* pOwner);
