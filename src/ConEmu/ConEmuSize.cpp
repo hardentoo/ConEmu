@@ -250,6 +250,14 @@ RECT CConEmuSize::CalcMargins_FrameCaption(DWORD/*enum ConEmuMargins*/ mg, ConEm
 				else
 					rc.top = rc.bottom;
 			}
+			if (bHideCaption)
+			{
+				int nFrame = gpSet->HideCaptionAlwaysFrame();
+				if (nFrame > 0)
+				{
+					rc.top += nFrame; rc.left += nFrame; rc.bottom += nFrame; rc.right += nFrame;
+				}
+			}
 			_ASSERTE(rc.top >= 0 && rc.left >= 0 && rc.right >= 0 && rc.bottom >= 0);
 			processed = true;
 		}
