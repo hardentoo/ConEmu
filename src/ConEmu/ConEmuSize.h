@@ -202,7 +202,7 @@ public:
 	CConEmuSize(CConEmuMain* pOwner);
 	virtual ~CConEmuSize();
 
-protected:
+public:
 	static void AddMargins(RECT& rc, const RECT& rcAddShift, RectOperations rect_op = rcop_Shrink);
 
 private:
